@@ -1,0 +1,41 @@
+# UERANSIM — симулятор базовой станции (gNB) и абонентского устройства (UE).
+# Собираем из исходников: готовые образы в реестрах есть, но для стенда важно
+# зафиксировать версию и не зависеть от чужого тега latest.
+
+FROM ubuntu:22.04 AS build
+
+ARG UERANSIM_VERSION=v3.2.6
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git cmake make gcc g++ libsctp-dev lksctp-tools iproute2 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone --depth 1 --branch ${UERANSIM_VERSION} https://github.com/aligungr/UERANSIM.git . \
+ && make -j"$(nproc)"
+
+# ── финальный образ: только бинарники и рантайм-зависимости ──
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libsctp1 lksctp-tools iproute2 iputils-ping iperf3 netcat-openbsd ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /src/build/nr-gnb /usr/local/bin/nr-gnb
+COPY --from=build /src/build/nr-ue  /usr/local/bin/nr-ue
+COPY --from=build /src/build/nr-cli /usr/local/bin/nr-cli
+COPY --from=build /src/build/libdevbnd.so /usr/local/lib/libdevbnd.so
+
+WORKDIR /ueransim
+RUN mkdir -p /ueransim/config
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["nr-gnb", "-c", "/ueransim/config/gnb.yaml"]

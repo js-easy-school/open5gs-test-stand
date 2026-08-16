@@ -1,0 +1,83 @@
+# Пайплайн стенда 5G-ядра на бесплатном раннере GitHub.
+#
+# Особенности раннера, из-за которых шаги именно такие:
+#  * NGAP между базовой станцией и AMF идёт по SCTP — модуль ядра надо загрузить явно;
+#  * UPF и UE поднимают туннель, поэтому нужен /dev/net/tun;
+#  * сборка UERANSIM из исходников занимает основное время, поэтому образы кешируются.
+
+name: 5G core stand
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  stand:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Окружение раннера
+        run: |
+          echo "ядро: $(uname -r)"
+          echo "процессоров: $(nproc), память:"; free -m | head -2
+          echo "диск:"; df -h / | tail -1
+          docker --version && docker compose version
+
+      - name: Модули ядра для SCTP и туннеля
+        run: |
+          sudo apt-get update -qq
+          # linux-modules-extra содержит sctp; на части образов раннера он уже есть
+          sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" || \
+            echo "пакет модулей недоступен — пробуем загрузить то, что есть"
+          sudo modprobe sctp || echo "ВНИМАНИЕ: sctp не загрузился"
+          sudo modprobe tun  || echo "ВНИМАНИЕ: tun не загрузился"
+          lsmod | grep -E "^(sctp|tun)" || true
+          ls -l /dev/net/tun
+
+      - name: Сборка образов
+        run: docker compose build --progress plain
+
+      - name: Развёртывание стенда
+        id: deploy
+        run: ./scripts/up.sh
+
+      - name: Состояние стенда
+        if: always()
+        run: |
+          docker compose ps
+          docker exec o5g-ue nr-cli imsi-999700000000001 -e status || true
+
+      - name: Функциональные тесты
+        run: ./scripts/test.sh -m "infra or subscriber or registration"
+
+      - name: Негативные сценарии
+        run: ./scripts/test.sh -m negative
+
+      - name: Логи ядра при падении
+        if: failure()
+        run: |
+          mkdir -p reports/logs
+          for c in nrf scp amf smf upf ausf udm udr pcf gnb ue; do
+            docker compose logs --no-color "$c" > "reports/logs/$c.log" 2>&1 || true
+          done
+          docker compose ps > reports/logs/containers.txt 2>&1 || true
+          echo "── хвост лога AMF ──"; tail -60 reports/logs/amf.log || true
+          echo "── хвост лога gNB ──"; tail -40 reports/logs/gnb.log || true
+          echo "── хвост лога UE ──";  tail -40 reports/logs/ue.log  || true
+
+      - name: Отчёты и логи
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
+          retention-days: 14
+
+      - name: Остановка стенда
+        if: always()
+        run: ./scripts/down.sh --purge

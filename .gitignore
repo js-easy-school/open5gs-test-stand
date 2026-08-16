@@ -1,0 +1,5 @@
+reports/
+.env
+*.pcap
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,22 @@
+# Образ прогона автотестов. Отдельный от ядра: тесты не должны тащить за собой
+# зависимости тестируемой системы, а CI запускает ровно этот образ.
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# docker-cli нужен, чтобы дёргать nr-cli внутри контейнера UE и читать логи AMF;
+# сам демон не ставим — используем сокет хоста
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends docker.io iputils-ping \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tests
+
+COPY tests/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY tests/ /tests/
+
+CMD ["pytest", "-v", "--junitxml=/reports/junit.xml", "--html=/reports/report.html", "--self-contained-html"]

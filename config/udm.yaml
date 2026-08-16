@@ -1,0 +1,23 @@
+# UDM — управление данными абонента: выдаёт профиль и векторы аутентификации.
+logger:
+  level: info
+
+global:
+  max:
+    ue: 128
+
+udm:
+  hnet:
+    - id: 1
+      scheme: 1
+      key: /open5gs/config/hnet/curve25519-1.key
+    - id: 2
+      scheme: 2
+      key: /open5gs/config/hnet/secp256r1-2.key
+  sbi:
+    server:
+      - address: 0.0.0.0
+        port: 7777
+    client:
+      scp:
+        - uri: http://scp:7777

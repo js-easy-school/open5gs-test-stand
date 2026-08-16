@@ -1,0 +1,16 @@
+# SCP — прокси сигнального обмена: все NF ходят друг к другу через него.
+logger:
+  level: info
+
+global:
+  max:
+    ue: 128
+
+scp:
+  sbi:
+    server:
+      - address: 0.0.0.0
+        port: 7777
+    client:
+      nrf:
+        - uri: http://nrf:7777

@@ -1,0 +1,37 @@
+# SMF — управление сессиями передачи данных: выдаёт абоненту IP и командует UPF.
+logger:
+  level: info
+
+global:
+  max:
+    ue: 128
+
+smf:
+  sbi:
+    server:
+      - address: 0.0.0.0
+        port: 7777
+    client:
+      scp:
+        - uri: http://scp:7777
+  pfcp:
+    server:
+      - address: 0.0.0.0
+    client:
+      upf:
+        - address: 10.33.0.22
+  gtpu:
+    server:
+      - address: 0.0.0.0
+  metrics:
+    server:
+      - address: 0.0.0.0
+        port: 9090
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet
+  dns:
+    - 8.8.8.8
+    - 1.1.1.1
+  mtu: 1400

@@ -1,0 +1,20 @@
+# NSSF — выбор сетевого слайса (в стенде слайс один: sst 1).
+logger:
+  level: info
+
+global:
+  max:
+    ue: 128
+
+nssf:
+  sbi:
+    server:
+      - address: 0.0.0.0
+        port: 7777
+    client:
+      scp:
+        - uri: http://scp:7777
+      nsi:
+        - uri: http://nrf:7777
+          s_nssai:
+            sst: 1

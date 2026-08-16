@@ -1,0 +1,6 @@
+reports/
+docs/
+.git/
+.github/
+__pycache__/
+.pytest_cache/

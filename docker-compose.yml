@@ -1,0 +1,244 @@
+# Тестовая схема: 5G-ядро Open5GS + симулятор радиосети UERANSIM.
+# Адреса заданы статически — NGAP и SBI должны знать соседей заранее,
+# а плавающие адреса контейнеров ломают конфиги при каждом перезапуске.
+
+name: open5gs-lab
+
+x-core: &core
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.open5gs
+  image: ${IMAGE_OPEN5GS:-open5gs-lab/open5gs:2.7.2}
+  restart: unless-stopped
+  mem_limit: ${NF_MEM_LIMIT:-160m}
+  volumes:
+    - ./config:/open5gs/config:ro
+  networks: [core]
+
+services:
+
+  # ── база данных абонентов ──
+  mongo:
+    image: mongo:7.0
+    container_name: o5g-mongo
+    restart: unless-stopped
+    mem_limit: ${MONGO_MEM_LIMIT:-512m}
+    command: ["mongod", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      core:
+        ipv4_address: 10.33.0.2
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── реестр сетевых функций: поднимается первым, остальные регистрируются в нём ──
+  nrf:
+    <<: *core
+    container_name: o5g-nrf
+    command: ["open5gs-nrfd", "-c", "/open5gs/config/nrf.yaml"]
+    environment:
+      WAIT_FOR: "mongo:27017"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      core:
+        ipv4_address: 10.33.0.10
+
+  # ── прокси сигнального обмена между NF ──
+  scp:
+    <<: *core
+    container_name: o5g-scp
+    command: ["open5gs-scpd", "-c", "/open5gs/config/scp.yaml"]
+    environment:
+      WAIT_FOR: "nrf:7777"
+    depends_on: [nrf]
+    networks:
+      core:
+        ipv4_address: 10.33.0.11
+
+  # ── аутентификация и профили абонентов ──
+  ausf:
+    <<: *core
+    container_name: o5g-ausf
+    command: ["open5gs-ausfd", "-c", "/open5gs/config/ausf.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777"
+    depends_on: [scp]
+    networks:
+      core:
+        ipv4_address: 10.33.0.12
+
+  udm:
+    <<: *core
+    container_name: o5g-udm
+    command: ["open5gs-udmd", "-c", "/open5gs/config/udm.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777"
+    depends_on: [scp]
+    networks:
+      core:
+        ipv4_address: 10.33.0.13
+
+  udr:
+    <<: *core
+    container_name: o5g-udr
+    command: ["open5gs-udrd", "-c", "/open5gs/config/udr.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777 mongo:27017"
+    depends_on: [scp]
+    networks:
+      core:
+        ipv4_address: 10.33.0.14
+
+  pcf:
+    <<: *core
+    container_name: o5g-pcf
+    command: ["open5gs-pcfd", "-c", "/open5gs/config/pcf.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777 mongo:27017"
+    depends_on: [scp]
+    networks:
+      core:
+        ipv4_address: 10.33.0.15
+
+  bsf:
+    <<: *core
+    container_name: o5g-bsf
+    command: ["open5gs-bsfd", "-c", "/open5gs/config/bsf.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777"
+    depends_on: [scp]
+    networks:
+      core:
+        ipv4_address: 10.33.0.16
+
+  nssf:
+    <<: *core
+    container_name: o5g-nssf
+    command: ["open5gs-nssfd", "-c", "/open5gs/config/nssf.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777"
+    depends_on: [scp]
+    networks:
+      core:
+        ipv4_address: 10.33.0.17
+
+  # ── управление доступом и мобильностью: точка входа радиосети ──
+  amf:
+    <<: *core
+    container_name: o5g-amf
+    command: ["open5gs-amfd", "-c", "/open5gs/config/amf.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777"
+    depends_on: [scp, ausf, udm, pcf, nssf]
+    networks:
+      core:
+        ipv4_address: 10.33.0.20
+
+  # ── управление сессиями ──
+  smf:
+    <<: *core
+    container_name: o5g-smf
+    command: ["open5gs-smfd", "-c", "/open5gs/config/smf.yaml"]
+    environment:
+      WAIT_FOR: "scp:7777 upf:8805"
+    depends_on: [scp, upf]
+    networks:
+      core:
+        ipv4_address: 10.33.0.21
+
+  # ── пользовательский трафик: нужен туннель и права на сеть ──
+  upf:
+    <<: *core
+    container_name: o5g-upf
+    command: ["open5gs-upfd", "-c", "/open5gs/config/upf.yaml"]
+    environment:
+      WAIT_FOR: "nrf:7777"
+      SETUP_TUN: "1"
+    depends_on: [nrf]
+    cap_add: [NET_ADMIN, SYS_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      core:
+        ipv4_address: 10.33.0.22
+
+  # ── симулятор базовой станции ──
+  gnb:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ueransim
+    image: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.2.6}
+    container_name: o5g-gnb
+    restart: unless-stopped
+    mem_limit: ${RAN_MEM_LIMIT:-128m}
+    command: ["nr-gnb", "-c", "/ueransim/config/gnb.yaml"]
+    environment:
+      WAIT_FOR: "amf:38412"
+    volumes:
+      - ./config:/ueransim/config:ro
+    depends_on: [amf]
+    cap_add: [NET_ADMIN]
+    networks:
+      core:
+        ipv4_address: 10.33.0.30
+
+  # ── симулятор абонентского устройства ──
+  ue:
+    image: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.2.6}
+    container_name: o5g-ue
+    restart: unless-stopped
+    mem_limit: ${RAN_MEM_LIMIT:-128m}
+    command: ["nr-ue", "-c", "/ueransim/config/ue.yaml"]
+    environment:
+      WAIT_FOR: "gnb:4997"
+    volumes:
+      - ./config:/ueransim/config:ro
+    depends_on: [gnb]
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      core:
+        ipv4_address: 10.33.0.31
+
+  # ── прогон автотестов: тот же образ используется и локально, и в CI ──
+  tests:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tests
+    image: open5gs-lab/tests:1.0
+    container_name: o5g-tests
+    profiles: ["test"]
+    volumes:
+      - ./tests:/tests:ro
+      - ./reports:/reports
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NRF_URL: "http://10.33.0.10:7777"
+      MONGO_URI: "mongodb://10.33.0.2:27017"
+      UE_CONTAINER: "o5g-ue"
+      AMF_CONTAINER: "o5g-amf"
+      TEST_IMSI: "999700000000001"
+      IMAGE_UERANSIM: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.2.6}
+      HOST_PROJECT_DIR: ${PWD:-/opt/open5gs-lab}
+    depends_on: [amf, smf, upf, ue]
+    networks: [core]
+
+networks:
+  core:
+    name: open5gs-core
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.33.0.0/24
+
+volumes:
+  mongo-data:

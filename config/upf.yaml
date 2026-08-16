@@ -1,0 +1,24 @@
+# UPF — пользовательский трафик: терминирует GTP-туннель от gNB и выпускает
+# пакеты абонента в сеть через интерфейс ogstun (его поднимает entrypoint).
+logger:
+  level: info
+
+global:
+  max:
+    ue: 128
+
+upf:
+  pfcp:
+    server:
+      - address: 0.0.0.0
+  gtpu:
+    server:
+      - address: 0.0.0.0
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet
+  metrics:
+    server:
+      - address: 0.0.0.0
+        port: 9090
