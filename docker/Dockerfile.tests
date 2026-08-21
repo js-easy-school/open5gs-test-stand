@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1 \
 # docker-cli нужен, чтобы дёргать nr-cli внутри контейнера UE и читать логи AMF;
 # сам демон не ставим — используем сокет хоста
 RUN apt-get update \
- && apt-get install -y --no-install-recommends docker.io iputils-ping \
+ && apt-get install -y --no-install-recommends curl docker.io iputils-ping \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tests

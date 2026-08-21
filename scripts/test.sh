@@ -4,7 +4,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p reports
-export PWD_HOST="$(pwd)"
 
 echo "── прогон тестов ──"
 HOST_PROJECT_DIR="$(pwd)" docker compose --profile test run --rm tests \

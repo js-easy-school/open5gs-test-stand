@@ -9,23 +9,23 @@ global:
 smf:
   sbi:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.21
         port: 7777
     client:
       scp:
-        - uri: http://scp:7777
+        - uri: http://10.33.0.11:7777
   pfcp:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.21
     client:
       upf:
         - address: 10.33.0.22
   gtpu:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.21
   metrics:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.21
         port: 9090
   session:
     - subnet: 10.45.0.0/16

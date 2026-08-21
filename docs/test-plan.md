@@ -37,7 +37,7 @@ AUSF, UDM, UDR, PCF, BSF, NSSF и база абонентов MongoDB.
 |---|---|---|
 | легальный абонент | 999700000000001 | регистрация проходит |
 | неизвестный абонент | 999700000009999 | отказ в регистрации |
-| неверный ключ SIM | 999700000000001 с чужим K | отказ аутентификации |
+| неверный ключ SIM | 999700000000002 с чужим K | отказ аутентификации |
 
 ## 5. Покрытие требований
 
@@ -48,13 +48,13 @@ AUSF, UDM, UDR, PCF, BSF, NSSF и база абонентов MongoDB.
 | Т3 | Каждая NF регистрируется в NRF | `test_all_expected_nf_registered_in_nrf` | test_infra.py |
 | Т4 | Базовая станция устанавливает NG-соединение с AMF | `test_gnb_connected_to_amf` | test_infra.py |
 | Т5 | Профиль абонента хранится в базе с ключами и слайсом | `test_subscriber_*` | test_subscriber.py |
-| Т6 | Абонент с корректными данными регистрируется в сети | `test_ue_is_registered` | test_registration.py |
+| Т6 | Абонент с корректными данными регистрируется в сети | `test_provisioned_subscriber_registers_and_receives_a_pdu_session`, `test_ue_is_registered` | test_registration_bdd.py, test_registration.py |
 | Т7 | Факт регистрации фиксируется в журнале AMF | `test_amf_logged_successful_registration` | test_registration.py |
 | Т8 | Абоненту создаётся сессия к точке доступа internet | `test_pdu_session_is_active` | test_registration.py |
 | Т9 | Адрес выдаётся из пула, заданного в конфигурации SMF | `test_ue_got_ip_from_core_pool` | test_registration.py |
 | Т10 | Пользовательский трафик проходит через UPF | `test_user_plane_reaches_gateway` | test_registration.py |
-| Т11 | Неизвестный абонент получает отказ | `test_unknown_subscriber_is_rejected` | test_negative.py |
-| Т12 | Абонент с неверным ключом не проходит аутентификацию | `test_wrong_key_fails_authentication` | test_negative.py |
+| Т11 | Неизвестный абонент получает отказ | `test_unknown_subscriber_is_rejected` | test_registration_bdd.py |
+| Т12 | Абонент с неверным ключом не проходит аутентификацию | `test_wrong_key_fails_authentication` | test_registration_bdd.py |
 | Т13 | Ошибочные попытки не влияют на легального абонента | `test_legal_subscriber_still_works_after_bad_attempts` | test_negative.py |
 | Т14 | Сетевые функции не падают из-за некорректных запросов | `test_core_survived_negative_cases` | test_negative.py |
 | Т15 | Абонент восстанавливает регистрацию после дерегистрации | `test_ue_reregisters_after_deregistration` | test_registration.py |

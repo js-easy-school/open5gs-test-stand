@@ -18,3 +18,4 @@ slices:
   - sst: 1
 
 ignoreStreamIds: true
+cellAccessType: nr

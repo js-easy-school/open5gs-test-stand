@@ -6,7 +6,7 @@
 
 import pytest
 
-from conftest import container_state, container_logs
+from conftest import EXPECTED_NF_TYPES, container_logs, container_state, registered_nf_types
 
 pytestmark = pytest.mark.infra
 
@@ -17,9 +17,6 @@ EXPECTED_CONTAINERS = [
     "o5g-pcf", "o5g-bsf", "o5g-nssf", "o5g-amf", "o5g-smf", "o5g-upf",
     "o5g-gnb", "o5g-ue",
 ]
-
-EXPECTED_NF_TYPES = {"AMF", "SMF", "AUSF", "UDM", "UDR", "PCF", "BSF", "NSSF"}
-
 
 @pytest.mark.parametrize("container", EXPECTED_CONTAINERS)
 def test_container_is_running(container):
@@ -43,20 +40,7 @@ def test_nrf_speaks_http2(nrf):
 
 
 def test_all_expected_nf_registered_in_nrf(nrf):
-    response = nrf.get("/nnrf-nfm/v1/nf-instances", params={"limit": 100})
-    assert response.status_code == 200, f"NRF вернул {response.status_code}"
-
-    body = response.json()
-    links = body.get("_links", {}).get("items", []) if isinstance(body, dict) else []
-    hrefs = [item.get("href", "") for item in links]
-
-    found = set()
-    for href in hrefs:
-        instance_id = href.rstrip("/").rsplit("/", 1)[-1]
-        profile = nrf.get(f"/nnrf-nfm/v1/nf-instances/{instance_id}")
-        if profile.status_code == 200:
-            found.add(profile.json().get("nfType"))
-
+    found = registered_nf_types(nrf)
     missing = EXPECTED_NF_TYPES - found
     assert not missing, f"в NRF не зарегистрированы: {sorted(missing)} (найдены: {sorted(found)})"
 

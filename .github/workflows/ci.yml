@@ -1,11 +1,4 @@
-# Пайплайн стенда 5G-ядра на бесплатном раннере GitHub.
-#
-# Особенности раннера, из-за которых шаги именно такие:
-#  * NGAP между базовой станцией и AMF идёт по SCTP — модуль ядра надо загрузить явно;
-#  * UPF и UE поднимают туннель, поэтому нужен /dev/net/tun;
-#  * сборка UERANSIM из исходников занимает основное время, поэтому образы кешируются.
-
-name: 5G core stand
+name: 5G core lab
 
 on:
   push:
@@ -13,71 +6,99 @@ on:
   pull_request:
   workflow_dispatch:
 
-jobs:
-  stand:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
+permissions:
+  contents: read
 
+concurrency:
+  group: open5gs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Static validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - name: Install test and validation dependencies
+        run: python -m pip install -r tests/requirements.txt
+      - name: Validate topology and configuration
+        run: python scripts/validate-configs.py
+      - name: Validate Compose model
+        run: docker compose config --quiet
+      - name: Compile test suite
+        run: python -m compileall -q tests
+      - name: Collect all pytest and Gherkin scenarios
+        run: python -m pytest -c tests/pytest.ini --collect-only -q tests
+
+  e2e:
+    name: Registration and user plane
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: Окружение раннера
+      - name: Enable TUN and SCTP in the runner kernel
         run: |
-          echo "ядро: $(uname -r)"
-          echo "процессоров: $(nproc), память:"; free -m | head -2
-          echo "диск:"; df -h / | tail -1
-          docker --version && docker compose version
+          sudo modprobe tun || true
+          if ! sudo modprobe sctp; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe sctp
+          fi
+          if [ ! -c /dev/net/tun ]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200
+            sudo chmod 666 /dev/net/tun
+          fi
+          test -c /dev/net/tun
+          test -r /proc/net/sctp/assocs
 
-      - name: Модули ядра для SCTP и туннеля
+      - name: Show runner capacity
         run: |
-          sudo apt-get update -qq
-          # linux-modules-extra содержит sctp; на части образов раннера он уже есть
-          sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" || \
-            echo "пакет модулей недоступен — пробуем загрузить то, что есть"
-          sudo modprobe sctp || echo "ВНИМАНИЕ: sctp не загрузился"
-          sudo modprobe tun  || echo "ВНИМАНИЕ: tun не загрузился"
-          lsmod | grep -E "^(sctp|tun)" || true
-          ls -l /dev/net/tun
+          uname -a
+          docker --version
+          docker compose version
+          free -h
+          df -h /
 
-      - name: Сборка образов
+      - name: Build pinned images
         run: docker compose build --progress plain
 
-      - name: Развёртывание стенда
-        id: deploy
+      - name: Deploy the lab and register the UE
+        env:
+          SKIP_BUILD: "1"
+          WAIT_SECONDS: "240"
         run: ./scripts/up.sh
 
-      - name: Состояние стенда
+      - name: Run pytest and executable Gherkin scenarios
+        run: ./scripts/test.sh -m "not slow"
+
+      - name: Capture diagnostic evidence
         if: always()
         run: |
-          docker compose ps
-          docker exec o5g-ue nr-cli imsi-999700000000001 -e status || true
-
-      - name: Функциональные тесты
-        run: ./scripts/test.sh -m "infra or subscriber or registration"
-
-      - name: Негативные сценарии
-        run: ./scripts/test.sh -m negative
-
-      - name: Логи ядра при падении
-        if: failure()
-        run: |
           mkdir -p reports/logs
-          for c in nrf scp amf smf upf ausf udm udr pcf gnb ue; do
-            docker compose logs --no-color "$c" > "reports/logs/$c.log" 2>&1 || true
+          docker compose ps --all > reports/logs/containers.txt 2>&1 || true
+          for service in nrf scp amf smf upf ausf udm udr pcf bsf nssf gnb ue; do
+            docker compose logs --no-color "$service" > "reports/logs/$service.log" 2>&1 || true
           done
-          docker compose ps > reports/logs/containers.txt 2>&1 || true
-          echo "── хвост лога AMF ──"; tail -60 reports/logs/amf.log || true
-          echo "── хвост лога gNB ──"; tail -40 reports/logs/gnb.log || true
-          echo "── хвост лога UE ──";  tail -40 reports/logs/ue.log  || true
+          docker exec o5g-ue nr-cli imsi-999700000000001 -e status > reports/logs/ue-status.txt 2>&1 || true
 
-      - name: Отчёты и логи
+      - name: Upload reports and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports
+          name: open5gs-test-evidence
           path: reports/
+          if-no-files-found: ignore
           retention-days: 14
 
-      - name: Остановка стенда
+      - name: Tear down the lab
         if: always()
         run: ./scripts/down.sh --purge
