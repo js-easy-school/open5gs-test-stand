@@ -10,14 +10,14 @@ udm:
   hnet:
     - id: 1
       scheme: 1
-      key: /open5gs/config/hnet/curve25519-1.key
+      key: /opt/open5gs/etc/open5gs/hnet/curve25519-1.key
     - id: 2
       scheme: 2
-      key: /open5gs/config/hnet/secp256r1-2.key
+      key: /opt/open5gs/etc/open5gs/hnet/secp256r1-2.key
   sbi:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.13
         port: 7777
     client:
       scp:
-        - uri: http://scp:7777
+        - uri: http://10.33.0.11:7777

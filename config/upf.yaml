@@ -10,15 +10,15 @@ global:
 upf:
   pfcp:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.22
   gtpu:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.22
   session:
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
       dnn: internet
   metrics:
     server:
-      - address: 0.0.0.0
+      - address: 10.33.0.22
         port: 9090

@@ -1,89 +1,47 @@
-# CI-пайплайн стенда: собрать образы → поднять ядро → прогнать тесты → отдать отчёты.
-# Раннер должен быть с executor=shell и установленным docker (privileged-режим
-# нужен UPF: он поднимает туннельный интерфейс).
+# Требуется Linux shell runner с Docker Compose, TUN и SCTP.
+# Один e2e job владеет стендом целиком: контейнеры не теряются между runner jobs.
 
 stages:
-  - build
-  - deploy
-  - test
-  - report
+  - validate
+  - e2e
 
 variables:
   IMSI: "999700000000001"
-  COMPOSE_PROJECT_NAME: "open5gs-lab-$CI_PIPELINE_ID"   # параллельные пайплайны не мешают друг другу
+  COMPOSE_PROJECT_NAME: "open5gs-lab"
   DOCKER_BUILDKIT: "1"
 
 default:
   tags: [docker, linux]
   interruptible: true
 
-# ── сборка образов: отдельный этап, чтобы падение сборки не путали с падением тестов ──
-build-images:
-  stage: build
+validate-config:
+  stage: validate
   script:
-    - docker compose build --pull
-    - docker images | grep open5gs-lab
+    - python3 -m pip install --user -r tests/requirements.txt
+    - python3 scripts/validate-configs.py
+    - docker compose config --quiet
+    - python3 -m compileall -q tests scripts
+    - python3 -m pytest -c tests/pytest.ini --collect-only -q tests
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
 
-# ── развёртывание тестовой схемы ──
-deploy-stand:
-  stage: deploy
+e2e:
+  stage: e2e
   script:
-    - ./scripts/up.sh
-  artifacts:
-    when: on_failure
-    paths:
-      - reports/
-    expire_in: 1 week
-
-# ── функциональные тесты ──
-functional-tests:
-  stage: test
-  script:
-    - mkdir -p reports
-    - ./scripts/test.sh -m "infra or subscriber or registration"
-  artifacts:
-    when: always
-    reports:
-      junit: reports/junit.xml
-    paths:
-      - reports/
-    expire_in: 1 month
-
-# ── негативные сценарии: отдельная задача, падает реже и чинится иначе ──
-negative-tests:
-  stage: test
-  script:
-    - mkdir -p reports
-    - ./scripts/test.sh -m negative
-  artifacts:
-    when: always
-    reports:
-      junit: reports/junit.xml
-    paths:
-      - reports/
-    expire_in: 1 month
-  allow_failure: false
-
-# ── логи ядра на случай разбора падения ──
-collect-logs:
-  stage: report
-  when: always
-  script:
+    - ./scripts/preflight.sh
+    - docker compose build --pull
+    - SKIP_BUILD=1 ./scripts/up.sh
+    - ./scripts/test.sh -m "not slow"
+  after_script:
     - mkdir -p reports/logs
-    - for c in amf smf upf nrf gnb ue; do docker compose logs --no-color $c > reports/logs/$c.log 2>&1 || true; done
-    - docker compose ps > reports/logs/containers.txt 2>&1 || true
+    - for c in amf smf upf nrf gnb ue; do docker compose logs --no-color "$c" > "reports/logs/$c.log" 2>&1 || true; done
+    - docker compose ps --all > reports/logs/containers.txt 2>&1 || true
+    - ./scripts/down.sh --purge || true
   artifacts:
     when: always
+    reports:
+      junit: reports/junit.xml
     paths:
-      - reports/logs/
+      - reports/
     expire_in: 1 month
-
-# ── уборка: стенд не должен оставаться висеть после прогона ──
-teardown:
-  stage: report
-  when: always
-  script:
-    - ./scripts/down.sh --purge

@@ -1,38 +1,50 @@
-# Свой образ 5G-ядра Open5GS: один образ на все сетевые функции,
-# конкретная NF выбирается командой в docker-compose.
-#
-# Собран многоступенчато не ради моды, а чтобы в финальном образе не остались
-# apt-кеши и ключи репозитория — это стандартное требование к образам в CI.
+# Reproducible Open5GS build. The tag and the commit are both checked so a
+# moved tag cannot silently change the image used by the lab.
+FROM ubuntu:22.04 AS build
 
-FROM ubuntu:22.04 AS base
-
-ARG OPEN5GS_VERSION=2.7.2
+ARG OPEN5GS_VERSION=v2.8.0
+ARG OPEN5GS_COMMIT=157f611a530e292e40ec50f9d23f0ef5d4fcd6a6
 ENV DEBIAN_FRONTEND=noninteractive
 
-# software-properties-common нужен только для add-apt-repository, дальше он не требуется
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates gnupg curl software-properties-common \
- && add-apt-repository -y ppa:open5gs/latest \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
-      open5gs \
-      iproute2 iptables iputils-ping netcat-openbsd \
- && apt-get purge -y software-properties-common gnupg \
- && apt-get autoremove -y \
+      build-essential bison ca-certificates cmake flex git meson ninja-build \
+      pkg-config python3-pip python3-setuptools python3-wheel \
+      libbson-dev libcurl4-gnutls-dev libgcrypt-dev libgnutls28-dev \
+      libidn-dev libmicrohttpd-dev libmongoc-dev libnghttp2-dev \
+      libsctp-dev libssl-dev libtalloc-dev libtins-dev libyaml-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# пакет поднимает все NF как службы systemd — в контейнере они не нужны:
-# один контейнер = один процесс, запускаемый напрямую
-RUN rm -rf /lib/systemd/system/open5gs-* /etc/systemd/system/multi-user.target.wants/open5gs-* || true
+WORKDIR /src/open5gs
+RUN git clone --depth 1 --branch "${OPEN5GS_VERSION}" https://github.com/open5gs/open5gs.git . \
+ && test "$(git rev-parse HEAD)" = "${OPEN5GS_COMMIT}" \
+ && meson setup build --prefix=/opt/open5gs --libdir=lib --buildtype=release \
+ && ninja -C build \
+ && ninja -C build install
+
+FROM ubuntu:22.04
+
+ARG OPEN5GS_VERSION=v2.8.0
+LABEL org.opencontainers.image.source="https://github.com/open5gs/open5gs" \
+      org.opencontainers.image.version="${OPEN5GS_VERSION}"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LD_LIBRARY_PATH=/opt/open5gs/lib \
+    PATH=/opt/open5gs/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl iproute2 iptables iputils-ping netcat-openbsd procps \
+      libbson-1.0-0 libcurl3-gnutls libgcrypt20 libgnutls30 libidn12 \
+      libmicrohttpd12 libmongoc-1.0-0 libnghttp2-14 libsctp1 libssl3 \
+      libtalloc2 libtins4.0 libyaml-0-2 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/open5gs /opt/open5gs
 
 WORKDIR /open5gs
-
-# конфиги монтируются томом из ./config, здесь только каталог по умолчанию
 RUN mkdir -p /open5gs/config /open5gs/logs
 
-# entrypoint ждёт зависимость (NRF или MongoDB) и только потом стартует NF —
-# иначе половина функций падает на старте из-за гонки контейнеров
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

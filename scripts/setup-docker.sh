@@ -15,7 +15,7 @@ echo "── ставим docker и compose ──"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-  ca-certificates curl gnupg lsb-release iproute2 iptables
+  ca-certificates curl gnupg lsb-release iproute2 iptables python3 python3-yaml
 
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg \

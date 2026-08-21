@@ -8,9 +8,12 @@ x-core: &core
   build:
     context: .
     dockerfile: docker/Dockerfile.open5gs
-  image: ${IMAGE_OPEN5GS:-open5gs-lab/open5gs:2.7.2}
+    args:
+      OPEN5GS_VERSION: v2.8.0
+      OPEN5GS_COMMIT: 157f611a530e292e40ec50f9d23f0ef5d4fcd6a6
+  image: ${IMAGE_OPEN5GS:-open5gs-lab/open5gs:2.8.0}
   restart: unless-stopped
-  mem_limit: ${NF_MEM_LIMIT:-160m}
+  mem_limit: ${NF_MEM_LIMIT:-256m}
   volumes:
     - ./config:/open5gs/config:ro
   networks: [core]
@@ -41,13 +44,18 @@ services:
     container_name: o5g-nrf
     command: ["open5gs-nrfd", "-c", "/open5gs/config/nrf.yaml"]
     environment:
-      WAIT_FOR: "mongo:27017"
+      WAIT_FOR_TCP: "mongo:27017"
     depends_on:
       mongo:
         condition: service_healthy
     networks:
       core:
         ipv4_address: 10.33.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --show-error --http2-prior-knowledge 'http://10.33.0.10:7777/nnrf-nfm/v1/nf-instances?limit=1' >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   # ── прокси сигнального обмена между NF ──
   scp:
@@ -55,8 +63,10 @@ services:
     container_name: o5g-scp
     command: ["open5gs-scpd", "-c", "/open5gs/config/scp.yaml"]
     environment:
-      WAIT_FOR: "nrf:7777"
-    depends_on: [nrf]
+      WAIT_FOR_TCP: "nrf:7777"
+    depends_on:
+      nrf:
+        condition: service_healthy
     networks:
       core:
         ipv4_address: 10.33.0.11
@@ -67,7 +77,7 @@ services:
     container_name: o5g-ausf
     command: ["open5gs-ausfd", "-c", "/open5gs/config/ausf.yaml"]
     environment:
-      WAIT_FOR: "scp:7777"
+      WAIT_FOR_TCP: "scp:7777"
     depends_on: [scp]
     networks:
       core:
@@ -78,7 +88,7 @@ services:
     container_name: o5g-udm
     command: ["open5gs-udmd", "-c", "/open5gs/config/udm.yaml"]
     environment:
-      WAIT_FOR: "scp:7777"
+      WAIT_FOR_TCP: "scp:7777"
     depends_on: [scp]
     networks:
       core:
@@ -89,7 +99,7 @@ services:
     container_name: o5g-udr
     command: ["open5gs-udrd", "-c", "/open5gs/config/udr.yaml"]
     environment:
-      WAIT_FOR: "scp:7777 mongo:27017"
+      WAIT_FOR_TCP: "scp:7777 mongo:27017"
     depends_on: [scp]
     networks:
       core:
@@ -100,7 +110,7 @@ services:
     container_name: o5g-pcf
     command: ["open5gs-pcfd", "-c", "/open5gs/config/pcf.yaml"]
     environment:
-      WAIT_FOR: "scp:7777 mongo:27017"
+      WAIT_FOR_TCP: "scp:7777 mongo:27017"
     depends_on: [scp]
     networks:
       core:
@@ -111,7 +121,7 @@ services:
     container_name: o5g-bsf
     command: ["open5gs-bsfd", "-c", "/open5gs/config/bsf.yaml"]
     environment:
-      WAIT_FOR: "scp:7777"
+      WAIT_FOR_TCP: "scp:7777"
     depends_on: [scp]
     networks:
       core:
@@ -122,7 +132,7 @@ services:
     container_name: o5g-nssf
     command: ["open5gs-nssfd", "-c", "/open5gs/config/nssf.yaml"]
     environment:
-      WAIT_FOR: "scp:7777"
+      WAIT_FOR_TCP: "scp:7777"
     depends_on: [scp]
     networks:
       core:
@@ -134,11 +144,16 @@ services:
     container_name: o5g-amf
     command: ["open5gs-amfd", "-c", "/open5gs/config/amf.yaml"]
     environment:
-      WAIT_FOR: "scp:7777"
+      WAIT_FOR_TCP: "scp:7777"
     depends_on: [scp, ausf, udm, pcf, nssf]
     networks:
       core:
         ipv4_address: 10.33.0.20
+    healthcheck:
+      test: ["CMD-SHELL", "ss -H -l -A sctp -n | grep -q ':38412'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   # ── управление сессиями ──
   smf:
@@ -146,7 +161,7 @@ services:
     container_name: o5g-smf
     command: ["open5gs-smfd", "-c", "/open5gs/config/smf.yaml"]
     environment:
-      WAIT_FOR: "scp:7777 upf:8805"
+      WAIT_FOR_TCP: "scp:7777"
     depends_on: [scp, upf]
     networks:
       core:
@@ -158,10 +173,9 @@ services:
     container_name: o5g-upf
     command: ["open5gs-upfd", "-c", "/open5gs/config/upf.yaml"]
     environment:
-      WAIT_FOR: "nrf:7777"
       SETUP_TUN: "1"
     depends_on: [nrf]
-    cap_add: [NET_ADMIN, SYS_ADMIN]
+    cap_add: [NET_ADMIN]
     sysctls:
       net.ipv4.ip_forward: 1
     devices:
@@ -175,39 +189,53 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.ueransim
-    image: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.2.6}
+      args:
+        UERANSIM_VERSION: v3.3.0
+        UERANSIM_COMMIT: 6bf5a1a96aaef6ae8778b9d8b477ac6e2bbf8156
+    image: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.3.0}
     container_name: o5g-gnb
     restart: unless-stopped
     mem_limit: ${RAN_MEM_LIMIT:-128m}
     command: ["nr-gnb", "-c", "/ueransim/config/gnb.yaml"]
-    environment:
-      WAIT_FOR: "amf:38412"
     volumes:
       - ./config:/ueransim/config:ro
-    depends_on: [amf]
+    depends_on:
+      amf:
+        condition: service_healthy
     cap_add: [NET_ADMIN]
     networks:
       core:
         ipv4_address: 10.33.0.30
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f '[n]r-gnb' >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # ── симулятор абонентского устройства ──
   ue:
-    image: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.2.6}
+    image: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.3.0}
     container_name: o5g-ue
     restart: unless-stopped
     mem_limit: ${RAN_MEM_LIMIT:-128m}
     command: ["nr-ue", "-c", "/ueransim/config/ue.yaml"]
-    environment:
-      WAIT_FOR: "gnb:4997"
     volumes:
       - ./config:/ueransim/config:ro
-    depends_on: [gnb]
+    depends_on:
+      gnb:
+        condition: service_healthy
     cap_add: [NET_ADMIN]
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
       core:
         ipv4_address: 10.33.0.31
+    healthcheck:
+      test: ["CMD-SHELL", "nr-cli imsi-999700000000001 -e status 2>/dev/null | grep -q 'RM-REGISTERED'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
 
   # ── прогон автотестов: тот же образ используется и локально, и в CI ──
   tests:
@@ -227,7 +255,7 @@ services:
       UE_CONTAINER: "o5g-ue"
       AMF_CONTAINER: "o5g-amf"
       TEST_IMSI: "999700000000001"
-      IMAGE_UERANSIM: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.2.6}
+      IMAGE_UERANSIM: ${IMAGE_UERANSIM:-open5gs-lab/ueransim:3.3.0}
       HOST_PROJECT_DIR: ${PWD:-/opt/open5gs-lab}
     depends_on: [amf, smf, upf, ue]
     networks: [core]

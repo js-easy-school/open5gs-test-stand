@@ -1,44 +1,51 @@
 #!/usr/bin/env bash
-# Поднять стенд целиком: собрать образы, запустить ядро, завести абонента,
-# дождаться регистрации. Один вход для человека и для CI.
+# Build and start the complete lab, provision subscribers, and wait for 5G registration.
 
 set -euo pipefail
-
 cd "$(dirname "$0")/.."
 
 IMSI="${IMSI:-999700000000001}"
-WAIT_SECONDS="${WAIT_SECONDS:-120}"
+WAIT_SECONDS="${WAIT_SECONDS:-180}"
 
-echo "── сборка образов ──"
-docker compose build
+./scripts/preflight.sh
 
-echo "── запуск ядра и радиосети ──"
-docker compose up -d
+if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
+  echo "── building pinned Open5GS and UERANSIM images ──"
+  docker compose build
+fi
 
-echo "── жду MongoDB ──"
+echo "── starting MongoDB and 5G core functions ──"
+docker compose up -d mongo nrf scp ausf udm udr pcf bsf nssf amf upf smf
+
+deadline=$((SECONDS + WAIT_SECONDS))
 until docker exec o5g-mongo mongosh --quiet --eval "db.adminCommand('ping').ok" >/dev/null 2>&1; do
+  if ((SECONDS >= deadline)); then
+    echo "MongoDB did not become ready in ${WAIT_SECONDS}s" >&2
+    docker compose ps --all >&2
+    exit 1
+  fi
   sleep 2
 done
 
-echo "── завожу абонента ──"
+echo "── provisioning positive and bad-key test subscribers ──"
 ./scripts/add-subscriber.sh "${IMSI}"
+./scripts/add-subscriber.sh "999700000000002"
 
-# абонент появился после старта UE — перезапускаем его, чтобы он зарегистрировался
-docker compose restart ue >/dev/null
+echo "── starting simulated gNB and UE ──"
+docker compose up -d gnb ue
 
-echo "── жду регистрацию абонента (до ${WAIT_SECONDS} c) ──"
-deadline=$(( SECONDS + WAIT_SECONDS ))
-while (( SECONDS < deadline )); do
+echo "── waiting for subscriber registration (up to ${WAIT_SECONDS}s) ──"
+deadline=$((SECONDS + WAIT_SECONDS))
+while ((SECONDS < deadline)); do
   if docker exec o5g-ue nr-cli "imsi-${IMSI}" -e status 2>/dev/null | grep -q "RM-REGISTERED"; then
-    echo "абонент зарегистрирован"
+    echo "subscriber ${IMSI} is registered"
     docker exec o5g-ue nr-cli "imsi-${IMSI}" -e status || true
-    echo
-    echo "стенд готов. тесты:  ./scripts/test.sh"
     exit 0
   fi
   sleep 3
 done
 
-echo "абонент так и не зарегистрировался за ${WAIT_SECONDS} c" >&2
-echo "смотрите: docker compose logs amf | tail -50" >&2
+echo "subscriber ${IMSI} did not register in ${WAIT_SECONDS}s" >&2
+docker compose ps --all >&2
+docker compose logs --tail 80 amf gnb ue >&2 || true
 exit 1
